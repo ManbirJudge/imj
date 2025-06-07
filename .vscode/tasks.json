@@ -1,0 +1,79 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Configure CMake (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                ".",
+                "-B",
+                "build/debug",
+                "-G",
+                "MinGW Makefiles",
+                "-DCMAKE_BUILD_TYPE=Debug"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Configure CMake (Release)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                ".",
+                "-B",
+                "build/release",
+                "-G",
+                "MinGW Makefiles",
+                "-DCMAKE_BUILD_TYPE=Release"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Build (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build/debug"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Build (Release)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build/release"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Install (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--install",
+                "build/debug",
+                "--prefix",
+                "dist"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Install (Release)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--install",
+                "build/release",
+                "--prefix",
+                "dist"
+            ],
+            "group": "build"
+        },
+    ]
+}
