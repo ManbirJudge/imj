@@ -29,6 +29,7 @@
         "stdint.h": "c",
         "jpeg.h": "c",
         "imj.h": "c",
-        "utils.h": "c"
+        "utils.h": "c",
+        "sample.h": "c"
     }
 }

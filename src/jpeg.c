@@ -21,10 +21,9 @@ uint16_t jpeg_stream_read(jpeg_Stream *s, size_t n)
     return res;
 }
 
-void jpeg_align(jpeg_Stream *s)
+void jpeg_stream_align(jpeg_Stream *s)
 {
-    if (s->pos & 7)
-        s->pos = (s->pos + 7) & ~7;
+    s->pos = (s->pos + 7) & ~7;
 }
 
 // ---
@@ -36,47 +35,37 @@ uint16_t jpeg_HT_get_code(jpeg_HT *ht, jpeg_Stream *s)
     {
         uint16_t bit = jpeg_stream_read(s, 1);
         code = (code << 1) | bit;
-        // printb_uint16(code);
-        // printf(" ");
-        // printf("%x ", code);
 
         for (int y = 0; y < ht->size; y++)
         {
             const jpeg_HT_Entry z = ht->table[y];
 
-            if (z.codeLen == x && z.code == code) //
+            if (z.codeLen == x && z.code == code)
             {
-                //  printf("\n");
+                // printf("<");
+                // printb_uint16(code);
+                // printf(">");
+
                 return z.symbol;
             }
         }
     }
 
-    ERR("Fucked up!");
     return -1;
 }
 
 int jpeg_decode_num(uint16_t bits, uint8_t len)
 {
-    int x = pow(2, len - 1);
-
-    if (bits >= x)
+    if (bits >= (1 << (len - 1)))
         return bits;
-    else
-        return bits - (2 * x - 1);
+    return bits - ((1 << len) - 1);
 }
 
 int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64], int oldDcCoeff, int mat[8][8])
 {
-    // DBG("Building");
-    // for (int i = 0; i < 64; i++)
-    // {
-    //     printf("%i ", qt[i]);
-    // }
-
     // setup
-    uint8_t precision = 8;
-    float idctTable[8][8] = {
+    static const uint8_t precision = 8;
+    static const float idctTable[8][8] = {
         {0.7071067811865475, 0.7071067811865475, 0.7071067811865475, 0.7071067811865475, 0.7071067811865475, 0.7071067811865475, 0.7071067811865475, 0.7071067811865475},
         {0.9807852804032304, 0.8314696123025452, 0.5555702330196023, 0.19509032201612833, -0.1950903220161282, -0.555570233019602, -0.8314696123025453, -0.9807852804032304},
         {0.9238795325112867, 0.38268343236508984, -0.3826834323650897, -0.9238795325112867, -0.9238795325112868, -0.38268343236509034, 0.38268343236509, 0.9238795325112865},
@@ -86,25 +75,35 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
         {0.38268343236508984, -0.9238795325112868, 0.9238795325112865, -0.3826834323650899, -0.38268343236509056, 0.9238795325112867, -0.9238795325112864, 0.38268343236508956},
         {0.19509032201612833, -0.5555702330196022, 0.8314696123025456, -0.9807852804032307, 0.9807852804032305, -0.831469612302545, 0.5555702330196015, -0.19509032201612858},
     };
-    static const int zigzagMat[8][8] = {
-        {0, 1, 5, 6, 14, 15, 27, 28},
-        {2, 4, 7, 13, 16, 26, 29, 42},
-        {3, 8, 12, 17, 25, 30, 41, 43},
-        {9, 11, 18, 24, 31, 40, 44, 53},
-        {10, 19, 23, 32, 39, 45, 52, 54},
-        {20, 22, 33, 38, 46, 51, 55, 60},
-        {21, 34, 37, 47, 50, 56, 59, 61},
-        {35, 36, 48, 49, 57, 58, 62, 63}};
+    static const uint8_t zigzag[64] = {
+        0, 1, 5, 6, 14, 15, 27, 28,
+        2, 4, 7, 13, 16, 26, 29, 42,
+        3, 8, 12, 17, 25, 30, 41, 43,
+        9, 11, 18, 24, 31, 40, 44, 53,
+        10, 19, 23, 32, 39, 45, 52, 54,
+        20, 22, 33, 38, 46, 51, 55, 60,
+        21, 34, 37, 47, 50, 56, 59, 61,
+        35, 36, 48, 49, 57, 58, 62, 63};
 
     // reading
     int _buffMat1[64] = {0}; // init reading
     int _buffMat2[8][8];     // zigzag
-    // int _buffMat3[8][8];     // output
 
     uint8_t _htCode = jpeg_HT_get_code(dcHt, s);
-    uint16_t _bits = jpeg_stream_read(s, _htCode);
-    int _dcCoeff = jpeg_decode_num(_bits, _htCode) + oldDcCoeff;
-    // DBG("%i, %i, %i", _htCode, _bits, _dcCoeff);
+    uint16_t _bits;
+    int _dcCoeff;
+    if (_htCode != 0)
+    {
+        _bits = jpeg_stream_read(s, _htCode);
+        _dcCoeff = jpeg_decode_num(_bits, _htCode) + oldDcCoeff;
+    }
+    else
+    {
+        _bits = 0;
+        _dcCoeff = oldDcCoeff;
+    }
+    // printb_uint16(_bits);
+    // printf(" %i (%i), %i\n", _dcCoeff, oldDcCoeff, _htCode);
 
     _buffMat1[0] = _dcCoeff * qt[0];
 
@@ -132,7 +131,7 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
     {
         for (uint8_t j = 0; j < 8; j++)
         {
-            _buffMat2[i][j] = _buffMat1[zigzagMat[i][j]];
+            _buffMat2[i][j] = _buffMat1[zigzag[i * 8 + j]];
         }
     }
 
@@ -155,16 +154,6 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
         }
     }
 
-    // for (uint8_t i = 0; i < 8; i++)
-    // {
-    //     for (uint8_t j = 0; j < 8; j++)
-    //     {
-    //         printf("%i ", _buffMat3[i][j]);
-    //     }
-    //     printf("\n");
-    // }
-    // printf("\n");
-
     // ---
     return _dcCoeff;
 }
@@ -184,7 +173,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
         {{}, 0, NULL},
         {{}, 0, NULL}};
     uint8_t quantTables[4][64];
-    jpeg_SOF0_data sof0Data = {};
+    jpeg_frame_data frameData = {};
     uint16_t resetInterval = 0;
 
     Pix *imgData = NULL;
@@ -208,12 +197,20 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                 return false;
             continue;
         }
-        case SOF:
+        case SOF0:
         {
-            if (!jpeg_read_SOF(f, &sof0Data, err))
+            if (!jpeg_read_SOF0(f, &frameData, err))
                 return false;
 
-            imgData = (Pix *)malloc(sof0Data.width * sof0Data.height * sizeof(Pix));
+            imgData = (Pix *)malloc(frameData.width * frameData.height * sizeof(Pix));
+            continue;
+        }
+        case SOF2:
+        {
+            if (!jpeg_read_SOF0(f, &frameData, err))  // TODO: implement seperate func
+                return false;
+
+            imgData = (Pix *)malloc(frameData.width * frameData.height * sizeof(Pix));
             continue;
         }
         case DRI:
@@ -238,9 +235,9 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
             // ---
             fseek(f, 1, SEEK_CUR);
 
-            jpeg_SOS_comp components[sof0Data.nComp];
+            jpeg_SOS_comp components[frameData.nComp];
 
-            for (uint8_t i = 0; i < sof0Data.nComp; i++)
+            for (uint8_t i = 0; i < frameData.nComp; i++)
             {
                 fread(&(components[i].id), 1, 1, f);
                 fread(&(components[i].dcHtId), 1, 1, f);
@@ -253,7 +250,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
 
             fseek(f, 3, SEEK_CUR); // TODO: for progressive JPEGs
 
-            DBG("Resent interval: %i", resetInterval);
+            DBG("Reset interval: %i", resetInterval);
 
             // 0xff00 -> 0xff
             byte _buff1;
@@ -274,8 +271,6 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                 if (!fread(&_buff1, 1, 1, f))
                     return false;
 
-                data[dataLen++] = _buff1;
-
                 if (_buff1 == 0xff)
                 {
                     if (!fread(&_buff2, 1, 1, f))
@@ -293,60 +288,61 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                             _buff2 == 0xd6 ||
                             _buff2 == 0xd7)
                         {
-                            // data[dataLen - 2] = 0;
-                            dataLen--;
+                            continue;
                         }
                         else
                         {
                             fseek(f, -2L, SEEK_CUR);
 
-                            // data[dataLen - 2] = 0;
+                            data[dataLen - 2] = 0;
                             dataLen--;
 
                             break;
                         }
                     }
                 }
+
+                data[dataLen++] = _buff1;
             }
 
             DBG("Actual data length: %i", dataLen);
-            // writeb_path("./x1.bin", data, dataLen);
+            writeb_path("./x1.bin", data, dataLen);
 
             jpeg_Stream st = {
                 .data = data,
                 .pos = 0,
                 .len = dataLen};
 
-            // MCUs
+            // decoding (& upsampling)
             uint8_t maxH = 1;
             uint8_t maxV = 1;
-            for (uint8_t c = 0; c < sof0Data.nComp; c++)
+            for (uint8_t c = 0; c < frameData.nComp; c++)
             {
-                if (sof0Data.components[c].samplingFactorH > maxH)
-                    maxH = sof0Data.components[c].samplingFactorH;
-                if (sof0Data.components[c].samplingFactorV > maxV)
-                    maxV = sof0Data.components[c].samplingFactorV;
+                if (frameData.components[c].samplingFactorH > maxH)
+                    maxH = frameData.components[c].samplingFactorH;
+                if (frameData.components[c].samplingFactorV > maxV)
+                    maxV = frameData.components[c].samplingFactorV;
             }
 
-            size_t mcuCols = (sof0Data.width + (8 * maxH - 1)) / (8 * maxH);
-            size_t mcuRows = (sof0Data.height + (8 * maxV - 1)) / (8 * maxV);
+            size_t mcuCols = (frameData.width + (8 * maxH - 1)) / (8 * maxH);
+            size_t mcuRows = (frameData.height + (8 * maxV - 1)) / (8 * maxV);
 
             size_t mcuCount = 0;
 
-            int oldDcCoeff[sof0Data.nComp];
-            memset(oldDcCoeff, 0, sof0Data.nComp);
+            int oldDcCoeff[frameData.nComp];
+            memset(oldDcCoeff, 0, frameData.nComp * sizeof(int));
 
-            int (*raw)[sof0Data.nComp] = malloc(sizeof(int) * sof0Data.height * sof0Data.width * sof0Data.nComp);
-            DBG("Alocated");
+            int (*raw)[frameData.nComp] = malloc(sizeof(int) * frameData.height * frameData.width * frameData.nComp);
+            memset(raw, (byte)100, sizeof(int) * frameData.height * frameData.width * frameData.nComp);
 
             for (size_t mcuRow = 0; mcuRow < mcuRows; mcuRow++)
             {
                 for (size_t mcuCol = 0; mcuCol < mcuCols; mcuCol++)
                 {
-                    for (uint8_t c = 0; c < sof0Data.nComp; c++)
+                    for (uint8_t c = 0; c < frameData.nComp; c++)
                     {
-                        uint8_t h = sof0Data.components[c].samplingFactorH;
-                        uint8_t v = sof0Data.components[c].samplingFactorV;
+                        uint8_t h = frameData.components[c].samplingFactorH;
+                        uint8_t v = frameData.components[c].samplingFactorV;
 
                         for (uint8_t blockRow = 0; blockRow < v; blockRow++)
                         {
@@ -358,19 +354,27 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                                     &st,
                                     &dcTables[components[c].dcHtId],
                                     &acTables[components[c].acHtId],
-                                    quantTables[sof0Data.components[c].qtId],
+                                    quantTables[frameData.components[c].qtId],
                                     oldDcCoeff[c],
                                     mat);
 
-                                for (uint8_t yy = 0; yy < 8; yy++)
-                                {
-                                    for (uint8_t xx = 0; xx < 8; xx++)
-                                    {
-                                        size_t m = (mcuRow * maxV + blockRow) * 8 + yy;
-                                        size_t n = (mcuCol * maxH + blockCol) * 8 + xx;
+                                // upsampling
+                                size_t a = 8 * maxH / h;
+                                size_t b = 8 * maxV / v;
+                                int upsampled[b][a];
 
-                                        if (m < sof0Data.height && n < sof0Data.width)
-                                            raw[m * sof0Data.width + n][c] = mat[yy][xx];
+                                upsample_scale_int(8, 8, maxH / h, maxV / v, mat, upsampled);
+
+                                // storing
+                                for (uint8_t yy = 0; yy < b; yy++)
+                                {
+                                    for (uint8_t xx = 0; xx < a; xx++)
+                                    {
+                                        size_t m = (mcuCol * maxH + blockCol) * 8 + xx;
+                                        size_t n = (mcuRow * maxV + blockRow) * 8 + yy;
+
+                                        if (n < frameData.height && m < frameData.width)
+                                            raw[n * frameData.width + m][c] = upsampled[yy][xx];
                                     }
                                 }
                             }
@@ -378,21 +382,32 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                     }
 
                     mcuCount++;
-                    if (resetInterval > 0 && mcuCount % resetInterval == 0)
+                    if (resetInterval > 0)
                     {
-                        memset(oldDcCoeff, 0, sof0Data.nComp);
-                        jpeg_align(&st);
+                        if (mcuCount % resetInterval == 0)
+                        {
+                            DBG("RESET --------------------");
+                            memset(oldDcCoeff, 0, frameData.nComp * sizeof(int));
+                            jpeg_stream_align(&st);
+                        }
                     }
                 }
             }
 
-            for (size_t i = 0, n1 = sof0Data.height; i < n1; i++)
+            // converting
+            if (frameData.nComp != 3)
             {
-                for (size_t j = 0, n2 = sof0Data.width; j < n2; j++)
+                snprintf(err, 100, "Only YCbCr images are supported.");
+                return false;
+            }
+
+            for (size_t i = 0, n1 = frameData.height; i < n1; i++)
+            {
+                for (size_t j = 0, n2 = frameData.width; j < n2; j++)
                 {
                     int *rawPix = raw[i * n2 + j];
-
                     imgData[i * n2 + j] = YCbCr_to_pix(rawPix[0], rawPix[1], rawPix[2]);
+                    // imgData[i * n2 + j] = YCbCr_to_pix(rawPix[0], 0, 0);
                 }
             }
 
@@ -431,8 +446,8 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
     }
 
     // ---
-    img->width = sof0Data.width;
-    img->height = sof0Data.height;
+    img->width = frameData.width;
+    img->height = frameData.height;
     img->data = imgData;
 
     // --- cleanup
@@ -489,44 +504,44 @@ bool jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100])
     return true;
 }
 
-bool jpeg_read_SOF(FILE *f, jpeg_SOF0_data *sof0Data, char err[100])
+bool jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100])
 {
     uint16_t len;
     fread(&len, 2, 1, f);
     swap_uint16(&len);
 
-    fread(&sof0Data->precision, 1, 1, f);
-    fread(&sof0Data->height, 2, 1, f);
-    fread(&sof0Data->width, 2, 1, f);
-    fread(&sof0Data->nComp, 1, 1, f);
+    fread(&frameData->precision, 1, 1, f);
+    fread(&frameData->height, 2, 1, f);
+    fread(&frameData->width, 2, 1, f);
+    fread(&frameData->nComp, 1, 1, f);
 
-    swap_uint16(&sof0Data->height);
-    swap_uint16(&sof0Data->width);
+    swap_uint16(&frameData->height);
+    swap_uint16(&frameData->width);
 
-    for (uint8_t i = 0; i < sof0Data->nComp; i++)
+    for (uint8_t i = 0; i < frameData->nComp; i++)
     {
-        fread(sof0Data->components + i, 1, 3, f);
-        sof0Data->components[i].samplingFactorV = sof0Data->components[i].samplingFactorH & 0x0f;
-        sof0Data->components[i].samplingFactorH >>= 4;
+        fread(frameData->components + i, 1, 3, f);
+        frameData->components[i].samplingFactorV = frameData->components[i].samplingFactorH & 0x0f;
+        frameData->components[i].samplingFactorH >>= 4;
     }
 
     // debugging
-    DBG("Size: %ix%i", sof0Data->width, sof0Data->height);
-    DBG("Precision: %i", sof0Data->precision);
-    DBG("Components (%i):", sof0Data->nComp);
-    for (uint8_t i = 0; i < sof0Data->nComp; i++)
+    DBG("Size: %ix%i", frameData->width, frameData->height);
+    DBG("Precision: %i", frameData->precision);
+    DBG("Components (%i):", frameData->nComp);
+    for (uint8_t i = 0; i < frameData->nComp; i++)
     {
-        const jpeg_SOF0_comp x = sof0Data->components[i];
+        const jpeg_frame_comp x = frameData->components[i];
         printf("ID: %i | Sampling factors: %i, %i | QT ID: %i\n", x.id, x.samplingFactorH, x.samplingFactorV, x.qtId);
     }
 
     // ---
-    if (sof0Data->precision != 8)
+    if (frameData->precision != 8)
     {
         snprintf(err, 100, "Only JPEGs with precision of 8-bits are supported.");
         return false;
     }
-    if (sof0Data->nComp != 3)
+    if (frameData->nComp != 3)
     {
         snprintf(err, 100, "Only YCbCr JPEGs are supported.");
         return false;
@@ -620,6 +635,32 @@ IMJ char *jpeg_get_marker_name(uint16_t marker)
 {
     switch (marker)
     {
+    case SOF0:
+        return "SOF 0 - Baseline DCT";
+    case SOF1:
+        return "SOF 1 - Extended Sequential DCT";
+    case SOF2:
+        return "SOF 2 - Progressive DCT";
+    case SOF3:
+        return "SOF 3 - Lossless";
+    case SOF5:
+        return "SOF 5 - Differential Sequential DCT";
+    case SOF6:
+        return "SOF 6 - Differential Progressive DCT";
+    case SOF7:
+        return "SOF 7 - Differential Lossless DCT";
+    case SOF9:
+        return "SOF 9 - Extended Sequential DCT (with Arithematic coding)";
+    case SOF10:
+        return "SOF 10 - Progressive DCT (with Arithematic coding)";
+    case SOF11:
+        return "SOF 11 - Lossless (with Arithematic coding)";
+    case SOF13:
+        return "SOF 13 - Differential Sequential DCT (with Arithematic coding)";
+    case SOF14:
+        return "SOF 14 - Differential Progressive DCT (with Arithematic coding)";
+    case SOF15:
+        return "SOF 15 - Differential Lossless DCT (with Arithematic coding)";
     case SOI:
         return "Start of Image";
     case APP0:
@@ -630,8 +671,6 @@ IMJ char *jpeg_get_marker_name(uint16_t marker)
         return "ICC Color Profile";
     case DQT:
         return "Quantization Table";
-    case SOF:
-        return "Start of Frame";
     case DHT:
         return "Define Huffman Table";
     case SOS:

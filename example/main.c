@@ -6,7 +6,7 @@
 
 int main(void)
 {
-    char *path = "C:\\Users\\manbi\\Downloads\\profile.jpg";
+    char *path = "C:\\Users\\manbi\\Downloads\\jpeg-home.jpg";
     Img img = {};
     char err[100];
 
