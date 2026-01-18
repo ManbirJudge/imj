@@ -1,14 +1,10 @@
 #ifndef CORE_H
 #define CORE_H
 
-#ifdef _WIN32
-    #ifdef IMJ_EXPORTS
-        #define IMJ __declspec(dllexport)
-    #else
-        #define IMJ __declspec(dllimport)
-    #endif
+#ifdef IMJ_EXPORTS
+    #define IMJ __declspec(dllexport)
 #else
-    #define IMJ
+    #define IMJ __declspec(dllimport)
 #endif
 
 #include <stdlib.h>
@@ -19,39 +15,26 @@
 
 #include "logging.h"
 
-// basic types
 typedef uint8_t byte;
 
-// complex types
 typedef struct
 {
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
-} Pix;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t a;
+} ImjPix;
 
-typedef Pix Clr;
+typedef ImjPix Clr;
 
 typedef struct
 {
-    unsigned int width;
-    unsigned int height;
-    Pix *data;
-} Img;
+    uint64_t width;
+    uint64_t height;
+    ImjPix *data;
+} ImjImg;
 
-// basic functions
-void swap_uint16(uint16_t *val);
-void swap_uint32(uint32_t *val);
-
-IMJ void print_bytes(byte bytes[], size_t n);
-IMJ void print_chars(byte chars[], size_t n);
-void printb_uint16(uint16_t val);
-
-// ---
-Pix YCbCr_to_pix(int Y, int Cb, int Cr);
-
-// image functions
-IMJ void imj_img_free(Img *img);
+void imj_swap_uint16(uint16_t *val);
+void imj_swap_uint32(uint32_t *val);
 
 #endif

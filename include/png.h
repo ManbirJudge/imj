@@ -12,8 +12,6 @@
 #include "logging.h"
 #include "core.h"
 
-extern const byte PNG_SIGN[8];
-
 typedef struct
 {
     uint32_t width;
@@ -23,7 +21,7 @@ typedef struct
     uint8_t compressionMethod;
     uint8_t filterMethod;
     uint8_t interlaceMethod;
-} png_IHDR;
+} imj_png_IHDR;
 
 typedef struct 
 {
@@ -32,13 +30,11 @@ typedef struct
     byte* filteredData;
     size_t compressedSize;    
     size_t decompressedSize;    
-} png_IDAT;
+} imj_png_IDAT;
 
-IMJ bool png_read(FILE *f, Img *img, char err[100]);
+IMJ bool imj_png_read(FILE *f, ImjImg *img, char err[100]);
 
-IMJ bool png_read_IHDR(FILE *f, png_IHDR *ihdrData, char err[100]);
-IMJ bool png_read_PLTE(FILE *f, Clr **pallete, uint32_t len, char err[100]);
-
-IMJ void png_print_IHDR(png_IHDR ihdrData);
+bool imj_png_read_IHDR(FILE *f, imj_png_IHDR *ihdrData, char err[100]);
+bool imj_png_read_PLTE(FILE *f, Clr **pallete, uint32_t len, char err[100]);
 
 #endif

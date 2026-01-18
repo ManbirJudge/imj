@@ -8,7 +8,6 @@
 
 #include "core.h"
 #include "logging.h"
-#include "sample.h"
 
 #define SOF0 (uint16_t)0xffc0
 #define SOF1 (uint16_t)0xffc1
@@ -81,20 +80,20 @@ typedef struct
     uint8_t acHtId;
 } jpeg_SOS_comp;
 
-uint16_t jpeg_stream_read(jpeg_Stream *s, size_t n);
-void jpeg_align(jpeg_Stream *s);
+uint16_t imj_jpeg_stream_read(jpeg_Stream *s, size_t n);
+void imj_jpeg_align(jpeg_Stream *s);
 
-uint16_t jpeg_HT_get_code(jpeg_HT *ht, jpeg_Stream *s);
-int jpeg_decode_num(uint16_t bits, uint8_t len);
-int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64], int oldDcCoeff, int mat[8][8]);
+uint16_t imj_jpeg_HT_get_code(jpeg_HT *ht, jpeg_Stream *s);
+int imj_jpeg_decode_num(uint16_t bits, uint8_t len);
+int imj_jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64], int oldDcCoeff, int mat[8][8]);
 
-IMJ bool jpeg_read(FILE *f, Img *img, char err[100]);
+IMJ bool imj_jpeg_read(FILE *f, ImjImg *img, char err[100]);
 
-bool jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100]);
-bool jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100]);
-bool jpeg_read_SOF2(FILE *f, jpeg_frame_data *frameData, char err[100]);
-bool jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[100]);
+bool imj_jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100]);
+bool imj_jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100]);
+bool imj_jpeg_read_SOF2(FILE *f, jpeg_frame_data *frameData, char err[100]);
+bool imj_jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[100]);
 
-IMJ char *jpeg_get_marker_name(uint16_t marker);
+char *imj_jpeg_get_marker_name(uint16_t marker);
 
 #endif

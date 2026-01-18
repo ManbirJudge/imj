@@ -1,8 +1,42 @@
 #include "jpeg.h"
-#include "utils.h"
+
+static uint8_t imj_clamp__(const int val) {
+    if (val < 0)
+        return 0;
+    if (val > 255)
+        return 255;
+    return (uint8_t) val;
+}
+
+static ImjPix imj_YCbCr2Pix__(const int Y, const int Cb, const int Cr) {
+    const double r = Cr * (2.0 - 2.0 * 0.299) + Y;
+    const double b = Cb * (2.0 - 2.0 * 0.114) + Y;
+    const double g = (Y - 0.114 * b - 0.299 * r) / 0.587;
+
+    return (ImjPix){
+        imj_clamp__((int)(r + 128)),
+        imj_clamp__((int)(g + 128)),
+        imj_clamp__((int)(b + 128)),
+        255
+    };
+}
+
+static void imj_UpsampleScalInt(size_t srcW, size_t srcH, size_t scaleX, size_t scaleY, int src[srcH][srcW], int dst[srcH * scaleX][srcW * scaleY])
+{
+    size_t a = srcW * scaleX;
+    size_t b = srcH * scaleY;
+
+    for (size_t y = 0; y < b; y++)
+    {
+        for (size_t x = 0; x < a; x++)
+        {
+            dst[y][x] = src[y / scaleY][x / scaleX];
+        }
+    }
+}
 
 // ---
-uint16_t jpeg_stream_read(jpeg_Stream *s, size_t n)
+uint16_t imj_jpeg_stream_read(jpeg_Stream *s, size_t n)
 {
     uint32_t res = 0;
 
@@ -27,13 +61,13 @@ void jpeg_stream_align(jpeg_Stream *s)
 }
 
 // ---
-uint16_t jpeg_HT_get_code(jpeg_HT *ht, jpeg_Stream *s)
+uint16_t imj_jpeg_HT_get_code(jpeg_HT *ht, jpeg_Stream *s)
 {
     uint16_t code = 0;
 
     for (int x = 1; x <= 16; x++)
     {
-        uint16_t bit = jpeg_stream_read(s, 1);
+        uint16_t bit = imj_jpeg_stream_read(s, 1);
         code = (code << 1) | bit;
 
         for (int y = 0; y < ht->size; y++)
@@ -61,7 +95,7 @@ int jpeg_decode_num(uint16_t bits, uint8_t len)
     return bits - ((1 << len) - 1);
 }
 
-int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64], int oldDcCoeff, int mat[8][8])
+int imj_jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64], int oldDcCoeff, int mat[8][8])
 {
     // setup
     static const uint8_t precision = 8;
@@ -89,12 +123,12 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
     int _buffMat1[64] = {0}; // init reading
     int _buffMat2[8][8];     // zigzag
 
-    uint8_t _htCode = jpeg_HT_get_code(dcHt, s);
+    uint8_t _htCode = imj_jpeg_HT_get_code(dcHt, s);
     uint16_t _bits;
     int _dcCoeff;
     if (_htCode != 0)
     {
-        _bits = jpeg_stream_read(s, _htCode);
+        _bits = imj_jpeg_stream_read(s, _htCode);
         _dcCoeff = jpeg_decode_num(_bits, _htCode) + oldDcCoeff;
     }
     else
@@ -110,7 +144,7 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
     int l = 1;
     while (l < 64)
     {
-        _htCode = jpeg_HT_get_code(acHt, s);
+        _htCode = imj_jpeg_HT_get_code(acHt, s);
         if (_htCode == 0)
             break;
 
@@ -120,7 +154,7 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
 
         if (size > 0 && l < 64)
         {
-            _bits = jpeg_stream_read(s, size);
+            _bits = imj_jpeg_stream_read(s, size);
             _buffMat1[l] = jpeg_decode_num(_bits, size) * qt[l];
             l++;
         }
@@ -159,7 +193,7 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
 }
 
 // ---
-IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
+bool imj_jpeg_read(FILE *f, ImjImg *img, char err[100])
 {
     // ---
     jpeg_HT dcTables[4] = {
@@ -176,7 +210,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
     jpeg_frame_data frameData = {};
     uint16_t resetInterval = 0;
 
-    Pix *imgData = NULL;
+    ImjPix *imgData = NULL;
 
     // ---
     uint16_t marker;
@@ -184,8 +218,8 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
 
     while (fread(&marker, 1, 2, f))
     {
-        swap_uint16(&marker);
-        INF("Marker: %4x | %s", marker, jpeg_get_marker_name(marker));
+        imj_swap_uint16(&marker);
+        INF("Marker: %4x | %s", marker, imj_jpeg_get_marker_name(marker));
 
         switch (marker)
         {
@@ -193,43 +227,43 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
             continue;
         case DQT:
         {
-            if (!jpeg_read_DQT(f, quantTables, err))
+            if (!imj_jpeg_read_DQT(f, quantTables, err))
                 return false;
             continue;
         }
         case SOF0:
         {
-            if (!jpeg_read_SOF0(f, &frameData, err))
+            if (!imj_jpeg_read_SOF0(f, &frameData, err))
                 return false;
 
-            imgData = (Pix *)malloc(frameData.width * frameData.height * sizeof(Pix));
+            imgData = (ImjPix *)malloc(frameData.width * frameData.height * sizeof(ImjPix));
             continue;
         }
         case SOF2:
         {
-            if (!jpeg_read_SOF0(f, &frameData, err))  // TODO: implement seperate func
+            if (!imj_jpeg_read_SOF0(f, &frameData, err))  // TODO: implement seperate func
                 return false;
 
-            imgData = (Pix *)malloc(frameData.width * frameData.height * sizeof(Pix));
+            imgData = (ImjPix *)malloc(frameData.width * frameData.height * sizeof(ImjPix));
             continue;
         }
         case DRI:
         {
             fseek(f, 2, SEEK_CUR);
             fread(&resetInterval, 2, 1, f);
-            swap_uint16(&resetInterval);
+            imj_swap_uint16(&resetInterval);
             continue;
         }
         case DHT:
         {
-            if (!jpeg_read_DHT(f, dcTables, acTables, err))
+            if (!imj_jpeg_read_DHT(f, dcTables, acTables, err))
                 return false;
             continue;
         }
         case SOS:
         {
             fread(&len, 2, 1, f);
-            swap_uint16(&len);
+            imj_swap_uint16(&len);
             len -= 2;
 
             // ---
@@ -306,7 +340,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
             }
 
             DBG("Actual data length: %i", dataLen);
-            writeb_path("./x1.bin", data, dataLen);
+            // writeb_path("./x1.bin", data, dataLen);
 
             jpeg_Stream st = {
                 .data = data,
@@ -350,7 +384,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                             {
                                 int mat[8][8];
 
-                                oldDcCoeff[c] = jpeg_build_mat(
+                                oldDcCoeff[c] = imj_jpeg_build_mat(
                                     &st,
                                     &dcTables[components[c].dcHtId],
                                     &acTables[components[c].acHtId],
@@ -363,7 +397,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                                 size_t b = 8 * maxV / v;
                                 int upsampled[b][a];
 
-                                upsample_scale_int(8, 8, maxH / h, maxV / v, mat, upsampled);
+                                imj_UpsampleScalInt(8, 8, maxH / h, maxV / v, mat, upsampled);
 
                                 // storing
                                 for (uint8_t yy = 0; yy < b; yy++)
@@ -406,7 +440,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                 for (size_t j = 0, n2 = frameData.width; j < n2; j++)
                 {
                     int *rawPix = raw[i * n2 + j];
-                    imgData[i * n2 + j] = YCbCr_to_pix(rawPix[0], rawPix[1], rawPix[2]);
+                    imgData[i * n2 + j] = imj_YCbCr2Pix__(rawPix[0], rawPix[1], rawPix[2]);
                     // imgData[i * n2 + j] = YCbCr_to_pix(rawPix[0], 0, 0);
                 }
             }
@@ -418,8 +452,6 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
             if (raw)
                 free(raw);
 
-            continue;
-
             // ---
             continue;
         }
@@ -430,7 +462,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
             if (marker == APP0 || marker == APP1 || marker == APP2 || marker == APP13)
             {
                 fread(&len, 2, 1, f);
-                swap_uint16(&len);
+                imj_swap_uint16(&len);
 
                 fseek(f, len - 2, SEEK_CUR);
                 continue;
@@ -466,11 +498,11 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
 }
 
 // ---
-bool jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100])
+bool imj_jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100])
 {
     uint16_t len;
     fread(&len, 2, 1, f);
-    swap_uint16(&len);
+    imj_swap_uint16(&len);
     len -= 2;
 
     uint8_t header;
@@ -504,19 +536,19 @@ bool jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100])
     return true;
 }
 
-bool jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100])
+bool imj_jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100])
 {
     uint16_t len;
     fread(&len, 2, 1, f);
-    swap_uint16(&len);
+    imj_swap_uint16(&len);
 
     fread(&frameData->precision, 1, 1, f);
     fread(&frameData->height, 2, 1, f);
     fread(&frameData->width, 2, 1, f);
     fread(&frameData->nComp, 1, 1, f);
 
-    swap_uint16(&frameData->height);
-    swap_uint16(&frameData->width);
+    imj_swap_uint16(&frameData->height);
+    imj_swap_uint16(&frameData->width);
 
     for (uint8_t i = 0; i < frameData->nComp; i++)
     {
@@ -550,11 +582,11 @@ bool jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100])
     return true;
 }
 
-bool jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[100])
+bool imj_jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[100])
 {
     uint16_t len;
     fread(&len, 2, 1, f);
-    swap_uint16(&len);
+    imj_swap_uint16(&len);
     len -= 2;
 
     uint16_t bytesRead = 0;
@@ -608,22 +640,22 @@ bool jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[1
         bytesRead += 17 + ht.size;
 
         // debugging
-        DBG("Class: %s", class ? "AC" : "DC");
-        DBG("ID: %i", id);
-        DBG("Lengths: ");
-        for (size_t i = 0; i < 16; i++)
-            VER("%i ", ht.lengths[i]);
-        VER("\n");
-        if (ht.size <= 16)
-        {
-            DBG("Table (%i): ", ht.size);
-            for (size_t i = 0; i < ht.size; i++)
-            {
-                printb_uint16(ht.table[i].code);
-                VER(": %x\n", ht.table[i].symbol);
-            }
-        }
-        DBG("--------------------------");
+        // DBG("Class: %s", class ? "AC" : "DC");
+        // DBG("ID: %i", id);
+        // DBG("Lengths: ");
+        // for (size_t i = 0; i < 16; i++)
+        //     VER("%i ", ht.lengths[i]);
+        // VER("\n");
+        // if (ht.size <= 16)
+        // {
+        //     DBG("Table (%i): ", ht.size);
+        //     for (size_t i = 0; i < ht.size; i++)
+        //     {
+        //         printb_uint16(ht.table[i].code);
+        //         VER(": %x\n", ht.table[i].symbol);
+        //     }
+        // }
+        // DBG("--------------------------");
     }
 
     // ---
@@ -631,7 +663,7 @@ bool jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[1
 }
 
 // ---
-IMJ char *jpeg_get_marker_name(uint16_t marker)
+char *imj_jpeg_get_marker_name(const uint16_t marker)
 {
     switch (marker)
     {
