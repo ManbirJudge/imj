@@ -5,7 +5,7 @@ IMJ void print_bytes(byte bytes[], size_t n)
 {
     for (size_t i = 0; i < n; i++)
     {
-        printf("%x ", bytes[i]);
+        VER("%x ", bytes[i]);
     }
 }
 
@@ -13,7 +13,7 @@ IMJ void print_chars(byte chars[], size_t n)
 {
     for (size_t i = 0; i < n; i++)
     {
-        printf("%c", chars[i]);
+        VER("%c", chars[i]);
     }
 }
 

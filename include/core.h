@@ -17,6 +17,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "logging.h"
+
 // basic types
 typedef uint8_t byte;
 

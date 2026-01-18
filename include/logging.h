@@ -10,8 +10,10 @@
 
 #ifdef NDEBUG
 	#define DBG(fmt, ...) ((void)0)
+	#define VER(fmt, ...) ((void)0)
 #else
-	#define DBG(fmt, ...) printf("[DEBUG] " fmt "\n", ##__VA_ARGS__)
+	#define DBG(fmt, ...) VER("[DEBUG] " fmt "\n", ##__VA_ARGS__)
+	#define VER(fmt, ...) VER(fmt, ##__VA_ARGS__)
 #endif
 
 #endif

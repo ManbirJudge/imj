@@ -42,9 +42,9 @@ uint16_t jpeg_HT_get_code(jpeg_HT *ht, jpeg_Stream *s)
 
             if (z.codeLen == x && z.code == code)
             {
-                // printf("<");
+                // VER("<");
                 // printb_uint16(code);
-                // printf(">");
+                // VER(">");
 
                 return z.symbol;
             }
@@ -103,7 +103,7 @@ int jpeg_build_mat(jpeg_Stream *s, jpeg_HT *dcHt, jpeg_HT *acHt, uint8_t qt[64],
         _dcCoeff = oldDcCoeff;
     }
     // printb_uint16(_bits);
-    // printf(" %i (%i), %i\n", _dcCoeff, oldDcCoeff, _htCode);
+    // VER(" %i (%i), %i\n", _dcCoeff, oldDcCoeff, _htCode);
 
     _buffMat1[0] = _dcCoeff * qt[0];
 
@@ -245,7 +245,7 @@ IMJ bool jpeg_read(FILE *f, Img *img, char err[100])
                 components[i].acHtId = components[i].dcHtId & 0x0f;
                 components[i].dcHtId >>= 4;
 
-                printf("%i | %i | %i\n", components[i].id, components[i].dcHtId, components[i].acHtId);
+                VER("%i | %i | %i\n", components[i].id, components[i].dcHtId, components[i].acHtId);
             }
 
             fseek(f, 3, SEEK_CUR); // TODO: for progressive JPEGs
@@ -494,9 +494,9 @@ bool jpeg_read_DQT(FILE *f, uint8_t quantTables[4][64], char err[100])
         DBG("Table:");
         for (uint8_t j = 0; j < 64; j++)
         {
-            printf("%3i ", quantTables[id][j]);
+            VER("%3i ", quantTables[id][j]);
             if (j % 8 == 7)
-                printf("\n");
+                VER("\n");
         }
     }
 
@@ -532,7 +532,7 @@ bool jpeg_read_SOF0(FILE *f, jpeg_frame_data *frameData, char err[100])
     for (uint8_t i = 0; i < frameData->nComp; i++)
     {
         const jpeg_frame_comp x = frameData->components[i];
-        printf("ID: %i | Sampling factors: %i, %i | QT ID: %i\n", x.id, x.samplingFactorH, x.samplingFactorV, x.qtId);
+        VER("ID: %i | Sampling factors: %i, %i | QT ID: %i\n", x.id, x.samplingFactorH, x.samplingFactorV, x.qtId);
     }
 
     // ---
@@ -612,15 +612,15 @@ bool jpeg_read_DHT(FILE *f, jpeg_HT dcTables[4], jpeg_HT acTables[4], char err[1
         DBG("ID: %i", id);
         DBG("Lengths: ");
         for (size_t i = 0; i < 16; i++)
-            printf("%i ", ht.lengths[i]);
-        printf("\n");
+            VER("%i ", ht.lengths[i]);
+        VER("\n");
         if (ht.size <= 16)
         {
             DBG("Table (%i): ", ht.size);
             for (size_t i = 0; i < ht.size; i++)
             {
                 printb_uint16(ht.table[i].code);
-                printf(": %x\n", ht.table[i].symbol);
+                VER(": %x\n", ht.table[i].symbol);
             }
         }
         DBG("--------------------------");
