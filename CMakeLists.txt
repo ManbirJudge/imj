@@ -36,13 +36,6 @@ else()
 endif()
 set_target_properties(imj PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-install(TARGETS imj
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-)
-install(DIRECTORY include/ DESTINATION include)
-
 # --- example
 message(STATUS "Configuring example ...")
 add_executable(imj_example example/main.c)

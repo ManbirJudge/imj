@@ -35,6 +35,6 @@ typedef struct
 IMJ bool imj_png_read(FILE *f, ImjImg *img, char err[100]);
 
 bool imj_png_read_IHDR(FILE *f, imj_png_IHDR *ihdrData, char err[100]);
-bool imj_png_read_PLTE(FILE *f, Clr **pallete, uint32_t len, char err[100]);
+bool imj_png_read_PLTE(FILE *f, ImjClr **pallete, uint32_t len, char err[100]);
 
 #endif

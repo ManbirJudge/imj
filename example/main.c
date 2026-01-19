@@ -16,11 +16,12 @@ int main(int argc, char *argv[]) {
     const bool res = imj_img_from_file(path, &img, err);
     const clock_t end = clock();
 
-    if (res) {
-        const double duration = (double)(end - begin) / CLOCKS_PER_SEC * 1000;
-        printf("Read in %.0f ms.\n", duration);
+    const double duration = (double)(end - begin) / CLOCKS_PER_SEC * 1000;
+    printf("Done in %.0f ms.\n", duration);
 
-        FILE *f = fopen("test.ppm", "wb");
+    if (res) {
+
+        FILE *f = fopen("test.pam", "wb");
         if (f) {
             fprintf(f, "P7\nWIDTH %llu\nHEIGHT %llu\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", img.width, img.height);
             for (size_t i = 0; i < img.width * img.height; i++) {

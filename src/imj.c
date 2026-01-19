@@ -18,9 +18,10 @@ bool imj_img_from_file(char *path, ImjImg *img, char *err) {
         read = &imj_png_read;
     else if (imj_extCmp__(path, "qoi"))
         read = &imj_qoi_read;
-    else if (imj_extCmp__(path, "pnm") || imj_extCmp__(path, "pbm") || imj_extCmp__(path, "pgm") || imj_extCmp__(path, "ppm") || imj_extCmp__(path, "pam")) {
+    else if (imj_extCmp__(path, "pnm") || imj_extCmp__(path, "pbm") || imj_extCmp__(path, "pgm") || imj_extCmp__(path, "ppm") || imj_extCmp__(path, "pam"))
         read = &imj_pnm_read;
-    }
+    else if (imj_extCmp__(path, "bmp"))
+        read = &imj_bmp_read;
     else {
         snprintf(err, 100, "Unsupported image format in '%s'.", path);
         return false;

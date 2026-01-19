@@ -39,7 +39,7 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100])
     unsigned char chunkType[4];
 
     imj_png_IHDR ihdrData = {};
-    Clr *pallete = NULL;
+    ImjClr *pallete = NULL;
     imj_png_IDAT idatData = {
         .compressedData = NULL,
         .decompressedData = NULL,
@@ -441,7 +441,7 @@ bool imj_png_read_IHDR(FILE *f, imj_png_IHDR *ihdrData, char err[100])
     return true;
 }
 
-bool imj_png_read_PLTE(FILE *f, Clr **pallete, uint32_t len, char err[100])
+bool imj_png_read_PLTE(FILE *f, ImjClr **pallete, uint32_t len, char err[100])
 {
     if (len % 3 != 0)
     {
@@ -455,7 +455,7 @@ bool imj_png_read_PLTE(FILE *f, Clr **pallete, uint32_t len, char err[100])
     }
 
     // TODO: max entries < possible due to bit-depth
-    *pallete = malloc(len / 3 * sizeof(Clr));
+    *pallete = malloc(len / 3 * sizeof(ImjClr));
 
     for (size_t i = 0, n = len / 3; i < n; i++)
     {
@@ -466,7 +466,7 @@ bool imj_png_read_PLTE(FILE *f, Clr **pallete, uint32_t len, char err[100])
         fread(&clr.b, 1, 1, f);
         clr.a = 255;
 
-        memcpy(&(*pallete)[i], &clr, sizeof(Clr));
+        memcpy(&(*pallete)[i], &clr, sizeof(ImjClr));
     }
 
     return true;

@@ -2,9 +2,9 @@
 #define CORE_H
 
 #ifdef IMJ_EXPORTS
-    #define IMJ __declspec(dllexport)
+#define IMJ __declspec(dllexport)
 #else
-    #define IMJ __declspec(dllimport)
+#define IMJ __declspec(dllimport)
 #endif
 
 #include <stdlib.h>
@@ -17,24 +17,22 @@
 
 typedef uint8_t byte;
 
-typedef struct
-{
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-    uint8_t a;
-} ImjPix;
+typedef struct {
+    uint8_t r, g, b, a;
+} ImjPix, ImjClr;
 
-typedef ImjPix Clr;
+typedef struct {
+    uint8_t x, y, z;
+} ImjVec3;
 
-typedef struct
-{
+typedef struct {
     uint64_t width;
     uint64_t height;
     ImjPix *data;
 } ImjImg;
 
 void imj_swap_uint16(uint16_t *val);
+
 void imj_swap_uint32(uint32_t *val);
 
 #endif
