@@ -9,6 +9,7 @@
 #include "qoi.h"
 #include "pnm.h"
 #include "bmp.h"
+#include "gif.h"
 
 IMJ bool imj_img_from_file(char* path, ImjImg* img, char* err);
 // IMJ Img imj_img_from_mem();

@@ -5,17 +5,16 @@ An image library.
 - Full BMP support.
 - Full QOIF support.
 - Full PNM support.
+- Full GIF support.
+  - Without animations, obviously. Only 1st frame is read.
 ## TODOs
-- Fix memery leaks in `png.c` and `jpeg.c`.
-- Code cleanup of `jpeg.c`.
+- Full PNG support.
+- Fix JPEG support.
 - Fix includes in all files (some files have extra or deficient headers).
 - Add support for following formats (in order of priority) -
-  - PNG (almost all except obscure rare cases)
-  - JPEG (only common cases)
   - WebP
-  - GIF (find a solution to handle animations)
+  - ICO
   - PAM
-  - ICO (almost all except obscure rare cases)
 - Add MSVC compilation support.
 ### PNG
 - PNG checks including but not limited to - chunk ordering.
@@ -27,3 +26,5 @@ An image library.
 - Color space stuff support.
 ### QOIF
 - `edgecase.qoi` fix.
+### GIF
+- Ability to get all frames.

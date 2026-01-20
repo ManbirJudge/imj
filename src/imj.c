@@ -22,6 +22,8 @@ bool imj_img_from_file(char *path, ImjImg *img, char *err) {
         read = &imj_pnm_read;
     else if (imj_extCmp__(path, "bmp"))
         read = &imj_bmp_read;
+    else if (imj_extCmp__(path, "gif"))
+        read = &imj_gif_read;
     else {
         snprintf(err, 100, "Unsupported image format in '%s'.", path);
         return false;
