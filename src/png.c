@@ -2,10 +2,9 @@
 
 static uint8_t imj_png_paeth__(const uint8_t a, const uint8_t b, const uint8_t c) {
     const int p = (int) a + (int) b - (int) c;
-    const uint8_t pa = abs(p - a);
-    const uint8_t pb = abs(p - b);
-    const uint8_t pc = abs(p - c);
-
+    const int pa = abs(p - a);
+    const int pb = abs(p - b);
+    const int pc = abs(p - c);
     if (pa <= pb && pa <= pc) return a;
     if (pb <= pc) return b;
     return c;
@@ -32,15 +31,18 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
     // --- chunks
     DBG("Reading chunks...");
 
-    uint32_t chunkLen;
-    unsigned char chunkType[4];
-
     ImjPngIhdr ihdr = {0};
     ImjClr *palette = NULL;
     ImjPngDataInfo di = {0};
 
+    bool isTransparent = false;  // for gray, rgb and indexed
+    uint16_t trnsGrayKey = 0;
+    uint16_t trnsRKey, trnsGKey, trnsBKey = 0;
+
     ImjPix *data = NULL;
 
+    uint32_t chunkLen;
+    unsigned char chunkType[4];
     while (fread(&chunkLen, 4, 1, f)) {
         imj_swap_uint32(&chunkLen);
         fread(chunkType, 1, 4, f);
@@ -62,15 +64,39 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
             }
             fread(di.compressedData + di.compressedDataSize, 1, chunkLen, f);
             di.compressedDataSize += chunkLen;
+        } else if (memcmp(chunkType, "tRNS", 4) == 0) {
+            isTransparent = true;
+            switch (ihdr.colorType) {
+                case IMJ_PNG_CLRTYPE_GRAY:{
+                    fread(&trnsGrayKey, 2, 1, f);
+                    imj_swap_uint16(&trnsGrayKey);
+                    break;
+                }
+                case IMJ_PNG_CLRTYPE_RGB: {
+                    fread(&trnsRKey, 2, 1, f);
+                    fread(&trnsGKey, 2, 1, f);
+                    fread(&trnsBKey, 2, 1, f);
+                    imj_swap_uint16(&trnsRKey);
+                    imj_swap_uint16(&trnsGKey);
+                    imj_swap_uint16(&trnsBKey);
+                    break;
+                }
+                case IMJ_PNG_CLRTYPE_IDX: {
+                    for (size_t i = 0; i < chunkLen; i++)
+                        fread(&palette[i].a, 1, 1, f);
+                    break;
+                }
+            }
         } else if (memcmp(chunkType, "IEND", 4) == 0) break;
         else {
             if (isupper(chunkType[0])) {
-                if (err) snprintf(err, 100 , "Unknown critical chunk: %4s", chunkType);
+                if (err) snprintf(err, 100, "Unknown critical chunk: %4s", chunkType);
                 return false;
             }
             WRN("Ignoring unknown ancillary chunk of length: %i", chunkLen);
             fseek(f, chunkLen, SEEK_CUR);
         }
+
         fseek(f, 4, SEEK_CUR); // crc
     }
 
@@ -78,7 +104,8 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
     // decompression
     DBG("Decompressing...");
 
-    di.decompressedData = (byte *) malloc(ihdr.height * (1 + ihdr.width * 8)); // TODO: where does '4' come from? i guess maximum possible color type (RGBA) + bit-depth (16) combination?
+    di.decompressedData = (byte *) malloc(ihdr.height * (1 + ihdr.width * 8));
+    // TODO: where does '4' come from? i guess maximum possible color type (RGBA) + bit-depth (16) combination?
     mz_ulong decompressedSize = ihdr.height * (1 + ihdr.width * 8);
 
     int status = mz_uncompress(
@@ -97,11 +124,7 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
         return false;
     }
 
-    // un-filtering
-    DBG("Un-filtering...");
-
-    di.filteredData = (byte *) malloc(ihdr.height * ihdr.width * 8);
-
+    // parameters
     uint8_t samplesPerPixel = 0;
     switch (ihdr.colorType) {
         case IMJ_PNG_CLRTYPE_GRAY:
@@ -120,117 +143,165 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
             samplesPerPixel = 4;
             break;
     }
-    uint8_t bytesPerPixel = (uint8_t)ceil((double)samplesPerPixel * ihdr.bitDepth / 8.);
-    size_t bytesPerScanline = 1 +  (size_t)ceil((double)ihdr.width * samplesPerPixel * ihdr.bitDepth / 8.);
 
-    byte prevUnfilteredScanline[bytesPerScanline - 1];
-    memset(prevUnfilteredScanline, 0, bytesPerScanline - 1);
-    byte unfilteredScanline[bytesPerScanline - 1];
+    size_t filterBpp = (samplesPerPixel * ihdr.bitDepth + 7) / 8;
+    if (filterBpp < 1) filterBpp = 1;
 
-    byte scanline[bytesPerScanline];
+    size_t bytesPerScanline = (size_t) ceil((double) ihdr.width * samplesPerPixel * ihdr.bitDepth / 8.);
+
+    // un-filtering
+    DBG("Un-filtering...");
+
+    di.filteredData = (byte *) malloc(ihdr.height * bytesPerScanline);
+
+    byte *prevUnfilteredScanline = malloc(bytesPerScanline);
+    memset(prevUnfilteredScanline, 0, bytesPerScanline);
+    byte *unfilteredScanline = malloc(bytesPerScanline);
+    byte *scanline = malloc(bytesPerScanline);
 
     for (uint32_t i = 0, nScanlines = ihdr.height; i < nScanlines; i++) {
-        memcpy(scanline, di.decompressedData + i * bytesPerScanline, bytesPerScanline);
-
-        switch (scanline[0]) {
+        size_t scanlineStart = i * (bytesPerScanline + 1);
+        memcpy(scanline, di.decompressedData + scanlineStart + 1, bytesPerScanline);
+        switch (di.decompressedData[scanlineStart]) {
             case IMJ_PNG_FILTER_NONE: {
-                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
-                    unfilteredScanline[j] = scanline[j + 1];
-                }
+                memcpy(unfilteredScanline, scanline, bytesPerScanline);
                 break;
             }
             case IMJ_PNG_FILTER_SUB: {
-                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
-                    if (j < bytesPerPixel)
-                        unfilteredScanline[j] = scanline[j + 1] + 0;
-                    else
-                        unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + unfilteredScanline[j - bytesPerPixel]);
-                }
+                size_t j = 0;
+                for (; j < filterBpp && j < bytesPerScanline; j++)
+                    unfilteredScanline[j] = scanline[j];
+                for (; j < bytesPerScanline; j++)
+                    unfilteredScanline[j] = (uint8_t) (scanline[j] + unfilteredScanline[j - filterBpp]);
                 break;
             }
             case IMJ_PNG_FILTER_UP: {
-                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
-                    unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + prevUnfilteredScanline[j]);
-                }
+                for (size_t j = 0; j < bytesPerScanline; j++)
+                    unfilteredScanline[j] = (uint8_t) (scanline[j] + prevUnfilteredScanline[j]);
                 break;
             }
             case IMJ_PNG_FILTER_AVG: {
-                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
-                    uint8_t x = 0;
-                    uint8_t y = prevUnfilteredScanline[j];
-
-                    if (j >= bytesPerPixel)
-                        x = unfilteredScanline[j - bytesPerPixel];
-
-                    unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + (uint8_t) ((x + y) / 2));
+                size_t j = 0;
+                for (; j < filterBpp && j < bytesPerScanline; j++) {
+                    uint16_t y = prevUnfilteredScanline[j];
+                    unfilteredScanline[j] = (uint8_t) (scanline[j] + (y / 2));
+                }
+                for (; j < bytesPerScanline; j++) {
+                    uint16_t x = unfilteredScanline[j - filterBpp];
+                    uint16_t y = prevUnfilteredScanline[j];
+                    unfilteredScanline[j] = (uint8_t) (scanline[j] + ((x + y) / 2));
                 }
                 break;
             }
             case IMJ_PNG_FILTER_PAETH: {
-                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
-                    uint8_t a = 0;
-                    uint8_t b = prevUnfilteredScanline[j];
-                    uint8_t c = 0;
-
-                    if (j >= bytesPerPixel) {
-                        a = unfilteredScanline[j - bytesPerPixel];
-                        c = prevUnfilteredScanline[j - bytesPerPixel];
-                    }
-
-                    unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + imj_png_paeth__(a, b, c));
+                size_t j = 0;
+                for (; j < filterBpp && j < bytesPerScanline; j++) {
+                    uint16_t b = prevUnfilteredScanline[j];
+                    unfilteredScanline[j] = (uint8_t) (scanline[j] + imj_png_paeth__(0, b, 0));
+                }
+                for (; j < bytesPerScanline; j++) {
+                    uint16_t a = unfilteredScanline[j - filterBpp];
+                    uint16_t b = prevUnfilteredScanline[j];
+                    uint16_t c = prevUnfilteredScanline[j - filterBpp];
+                    unfilteredScanline[j] = (uint8_t) (scanline[j] + imj_png_paeth__(a, b, c));
                 }
                 break;
             }
             default: {
                 snprintf(err, 100, "Unknown filter type.");
-                free(di.compressedData);
                 free(di.filteredData);
+                free(prevUnfilteredScanline);
+                free(unfilteredScanline);
+                free(scanline);
                 return false;
             }
         }
 
-        memcpy(prevUnfilteredScanline, unfilteredScanline, bytesPerScanline - 1);
-        memcpy(di.filteredData + i * (bytesPerScanline - 1), unfilteredScanline, bytesPerScanline - 1);
+        memcpy(prevUnfilteredScanline, unfilteredScanline, bytesPerScanline);
+        memcpy(di.filteredData + i * bytesPerScanline, unfilteredScanline, bytesPerScanline);
     }
 
     free(di.decompressedData);
     di.decompressedData = NULL;
+    free(prevUnfilteredScanline);
+    free(unfilteredScanline);
+    free(scanline);
 
-    // assembling image data
+    // assembling image data | TODO: use pointer incrementation instead of calculating k
     DBG("Assembling image data...");
     data = (ImjPix *) malloc(ihdr.width * ihdr.height * sizeof(ImjPix));
 
     ImjPngSamplerInfo si;
     imj_png_sampler_init(&si, &ihdr, &di);
 
+    trnsGrayKey &= si.mask;
+    trnsRKey &= si.mask;
+    trnsGKey &= si.mask;
+    trnsBKey &= si.mask;
+
     switch (ihdr.colorType) {
         case IMJ_PNG_CLRTYPE_GRAY: {
-            for (uint32_t i = 0; i < ihdr.height; i++) {
-                si.buff = 0;
-                si.buffSize = 0;
-                for (uint32_t j = 0; j < ihdr.width; j++) {
-                    size_t k = (size_t) i * ihdr.width + j;
-                    uint8_t s = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+            if (isTransparent) {
+                for (uint32_t i = 0; i < ihdr.height; i++) {
+                    si.buff = 0;
+                    si.buffSize = 0;
+                    for (uint32_t j = 0; j < ihdr.width; j++) {
+                        size_t k = (size_t) i * ihdr.width + j;
+                        uint16_t raw = imj_png_sampler_nextSample(&si);
+                        uint8_t s = ((uint32_t)raw * 255) / si.maxVal;
+                        data[k].r = s;
+                        data[k].g = s;
+                        data[k].b = s;
+                        data[k].a = raw == trnsGrayKey ? 0 : 255;
+                    }
+                }
+            } else {
+                for (uint32_t i = 0; i < ihdr.height; i++) {
+                    si.buff = 0;
+                    si.buffSize = 0;
+                    for (uint32_t j = 0; j < ihdr.width; j++) {
+                        size_t k = (size_t) i * ihdr.width + j;
+                        uint8_t s = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
 
-                    data[k].r = s;
-                    data[k].g = s;
-                    data[k].b = s;
-                    data[k].a = 255;
+                        data[k].r = s;
+                        data[k].g = s;
+                        data[k].b = s;
+                        data[k].a = 255;
+                    }
                 }
             }
             break;
         }
         case IMJ_PNG_CLRTYPE_RGB: {
-            for (uint32_t i = 0; i < ihdr.height; i++) {
-                si.buff = 0;
-                si.buffSize = 0;
-                for (uint32_t j = 0; j < ihdr.width; j++) {
-                    size_t k = (size_t) i * ihdr.width + j;
+            if (isTransparent) {
+                for (uint32_t i = 0; i < ihdr.height; i++) {
+                    si.buff = 0;
+                    si.buffSize = 0;
+                    for (uint32_t j = 0; j < ihdr.width; j++) {
+                        size_t k = (size_t) i * ihdr.width + j;
 
-                    data[k].r = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
-                    data[k].g = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
-                    data[k].b = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
-                    data[k].a = 255;
+                        uint16_t rawR = imj_png_sampler_nextSample(&si);
+                        uint16_t rawG = imj_png_sampler_nextSample(&si);
+                        uint16_t rawB = imj_png_sampler_nextSample(&si);
+
+                        data[k].r = ((uint32_t) rawR * 255) / si.maxVal;
+                        data[k].g = ((uint32_t) rawG * 255) / si.maxVal;
+                        data[k].b = ((uint32_t) rawB * 255) / si.maxVal;
+                        data[k].a = (((rawR ^ trnsRKey) | (rawG ^ trnsGKey) | (rawB ^ trnsBKey)) == 0) ? 0 : 255;
+                    }
+                }
+            } else {
+                for (uint32_t i = 0; i < ihdr.height; i++) {
+                    si.buff = 0;
+                    si.buffSize = 0;
+                    for (uint32_t j = 0; j < ihdr.width; j++) {
+                        size_t k = (size_t) i * ihdr.width + j;
+
+                        data[k].r = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
+                        data[k].g = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
+                        data[k].b = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
+                        data[k].a = 255;
+                    }
                 }
             }
             break;
@@ -256,12 +327,12 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
                 si.buffSize = 0;
                 for (uint32_t j = 0; j < ihdr.width; j++) {
                     size_t k = (size_t) i * ihdr.width + j;
-                    uint8_t s = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    uint8_t s = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
 
                     data[k].r = s;
                     data[k].g = s;
                     data[k].b = s;
-                    data[k].a = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].a = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
                 }
             }
             break;
@@ -273,10 +344,10 @@ bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
                 for (uint32_t j = 0; j < ihdr.width; j++) {
                     size_t k = (size_t) i * ihdr.width + j;
 
-                    data[k].r = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
-                    data[k].g = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
-                    data[k].b = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
-                    data[k].a = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].r = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
+                    data[k].g = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
+                    data[k].b = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
+                    data[k].a = ((uint32_t)imj_png_sampler_nextSample(&si) * 255) / si.maxVal;
                 }
             }
             break;

@@ -2,24 +2,17 @@
 # imj
 An image library.
 ## Features
+- Full PNG support.
+  - Without Adam7 interlacing.
+  - Without CRC checks.
 - Full BMP support.
   - Without embedded PNGs and JPEGs.
-- Full QOIF support.
-- Full PNM support.
 - Full GIF support.
   - Without animations. Only 1st frame is read.
+- Full QOIF support.
+- Full PNM support.
 ## TODOs
-- Full PNG support.
-  - All bit-depths.
-    - Generalized filtered stream reader.
-      - Also handle 16-bit case.
-  - Adam7 interlacing.
-  - Proper transparency and alpha handling.
-    - Fix broken alpha channel in 32-bit RGBA PNGs.
-    - `tRNS` chunk.
-  - CRC check.
-  - Chunk ordering rules.
-  - Fix memory leaks.
+- Use `goto` for error handling.
 - JPEG support.
   - ~~Baseline DCT~~
   - Progressive DCT
@@ -33,8 +26,16 @@ An image library.
 - Add MSVC compilation support.
 - Add Linux compilation support.
 ### PNG
-- All PNG bit-depths.
-- Ancillary PNG chunk support.
+- ~~All PNG bit-depths.~~
+- CRC check.
+- Fix memory leaks (if any).
+- Adam7 interlacing.
+- ~~All bit-depths.~~
+  - ~~Generalized filtered stream reader.~~
+    - ~~Also handle 16-bit case.~~
+- ~~Proper transparency and alpha handling.~~
+  - ~~Fix broken alpha channel in 32-bit RGBA PNGs.~~
+  - ~~`tRNS` chunk.~~
 ### BMP
 - ~~OS/2 BMP support.~~
 ### QOIF
@@ -42,12 +43,12 @@ An image library.
 ### GIF
 - Ability to get all frames.
 ## Exotic Image Formats to Learn About
+- TIFF
 - PCX
 - ILBM
 - TGA
 - DDS
 - SGI RGB
-- TIFF
 - OpenEXR
 - YCbCr Raw
 - YUV4MPEG

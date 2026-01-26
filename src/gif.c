@@ -128,13 +128,13 @@ bool imj_gif_read(FILE *f, ImjImg *img, char err[100]) {
     // ---
     bool oneImgRead = false;
     bool done = false;
-    ImjPix *data = malloc(lsd.width * lsd.height * sizeof(ImjPix));
+    ImjPix *data = calloc(lsd.width * lsd.height, sizeof(ImjPix));
 
     // blocks
     byte blockId;
 
     bool transparency = false;
-    uint16_t transparentClrIdx;
+    uint16_t transparentClrIdx = 0;
 
     while (fread(&blockId, 1, 1, f) && !done) {
         switch (blockId) {
@@ -250,9 +250,8 @@ bool imj_gif_read(FILE *f, ImjImg *img, char err[100]) {
 
                     for (size_t i = 0; i < outLen; i++) {
                         decoded[c++] = ct[ld.stack[i]];
-                        if (transparency && ld.stack[i] == transparentClrIdx) {
+                        if (transparency && ld.stack[i] == transparentClrIdx)
                             decoded[c - 1].a = 0;
-                        }
                     }
 
                     if (ld.prevCode != INVALID_CODE__ && ld.dictSize < 4096) {
@@ -317,7 +316,7 @@ bool imj_gif_read(FILE *f, ImjImg *img, char err[100]) {
                         fread(&transparentClrIdx, 1, 1, f);
                         fseek(f, 1, SEEK_CUR);  // terminator
 
-                        transparency = (packed >> 4 & 0x01) != 0;
+                        transparency = packed & 0x01;
 
                         break;
                     }
