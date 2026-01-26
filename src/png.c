@@ -1,438 +1,377 @@
 #include "png.h"
 
-static uint8_t imj_PaethPredictor__(uint8_t a, uint8_t b, uint8_t c)
-{
-    int p = (int)a + (int)b - (int)c;
-    int pa = abs(p - a);
-    int pb = abs(p - b);
-    int pc = abs(p - c);
+static uint8_t imj_png_paeth__(const uint8_t a, const uint8_t b, const uint8_t c) {
+    const int p = (int) a + (int) b - (int) c;
+    const uint8_t pa = abs(p - a);
+    const uint8_t pb = abs(p - b);
+    const uint8_t pc = abs(p - c);
 
     if (pa <= pb && pa <= pc) return a;
     if (pb <= pc) return b;
     return c;
 }
 
-bool imj_png_read(FILE *f, ImjImg *img, char err[100])
-{
-    if (!f || !img)
-    {
-        if (err)
-            snprintf(err, 100, "One of the arguments is NULL.");
+bool imj_png_read(FILE *f, ImjImg *img, char err[100]) {
+    if (!f || !img) {
+        if (err) snprintf(err, 100, "One of the arguments is NULL.");
         return false;
     }
 
+    // --- signature
+    DBG("Checking signature...");
+
+    const byte PNG_SIGN[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
     byte buff1[8];
 
-    // --- signature
-    const byte PNG_SIGN[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
-
     fread(buff1, 1, 8, f);
-    if (memcmp(buff1, PNG_SIGN, 8) != 0)
-    {
-        if (err)
-            snprintf(err, 100, "Invalid PNG file signature: \'%.*s\'.", 4, buff1);
+    if (memcmp(buff1, PNG_SIGN, 8) != 0) {
+        if (err) snprintf(err, 100, "Invalid PNG file signature: \'%.*s\'.", 4, buff1);
         return false;
     }
 
     // --- chunks
+    DBG("Reading chunks...");
+
     uint32_t chunkLen;
     unsigned char chunkType[4];
 
-    imj_png_IHDR ihdrData = {};
-    ImjClr *pallete = NULL;
-    imj_png_IDAT idatData = {
-        .compressedData = NULL,
-        .decompressedData = NULL,
-        .filteredData = NULL,
-        .compressedSize = 0,
-        .decompressedSize = 0};
+    ImjPngIhdr ihdr = {0};
+    ImjClr *palette = NULL;
+    ImjPngDataInfo di = {0};
 
     ImjPix *data = NULL;
 
-    // TODO: checks: IHDR 1st, IEND last, must contain least 1 IDAT (if multiple, they must be adjacent), only 1 PLTE before IDAT
-
-    while (fread(&chunkLen, 4, 1, f))
-    {
+    while (fread(&chunkLen, 4, 1, f)) {
         imj_swap_uint32(&chunkLen);
         fread(chunkType, 1, 4, f);
 
-        // if (!(('A' <= chunkType[3]) && (chunkType[3] <= 'Z')))
-        //     continue;
+        if (memcmp(chunkType, "IHDR", 4) == 0) {
+            if (!imj_png_read_IHDR(f, &ihdr, err)) return false;
 
-        if (memcmp(chunkType, "IHDR", 4) == 0)
-        {
-            if (!imj_png_read_IHDR(f, &ihdrData, err))
+            di.compressedData = (byte *) malloc(1024);
+            di.compressedDataCap = 1024;
+        } else if (memcmp(chunkType, "PLTE", 4) == 0) {
+            if (!imj_png_read_PLTE(f, &palette, chunkLen, err)) {
+                if (di.compressedData) free(di.compressedData);
                 return false;
-
-            idatData.compressedData = (byte *)malloc(ihdrData.height * (1 + ihdrData.width * 4));
-            idatData.decompressedData = (byte *)malloc(ihdrData.height * (1 + ihdrData.width * 4));
-            idatData.filteredData = (byte *)malloc(ihdrData.height * (1 + ihdrData.width * 4));
-            idatData.decompressedSize = (size_t)ihdrData.height * (1 + ihdrData.width * 4);
-
-            fseek(f, 4, SEEK_CUR);
-        }
-        else if (memcmp(chunkType, "PLTE", 4) == 0)
-        {
-            if (!imj_png_read_PLTE(f, &pallete, chunkLen, err))
+            }
+        } else if (memcmp(chunkType, "IDAT", 4) == 0) {
+            while (di.compressedDataSize + chunkLen >= di.compressedDataCap) {
+                di.compressedDataCap *= 2;
+                di.compressedData = realloc(di.compressedData, di.compressedDataCap);
+            }
+            fread(di.compressedData + di.compressedDataSize, 1, chunkLen, f);
+            di.compressedDataSize += chunkLen;
+        } else if (memcmp(chunkType, "IEND", 4) == 0) break;
+        else {
+            if (isupper(chunkType[0])) {
+                if (err) snprintf(err, 100 , "Unknown critical chunk: %4s", chunkType);
                 return false;
-            fseek(f, 4, SEEK_CUR);
+            }
+            WRN("Ignoring unknown ancillary chunk of length: %i", chunkLen);
+            fseek(f, chunkLen, SEEK_CUR);
         }
-        else if (memcmp(chunkType, "IDAT", 4) == 0)
-        {
-            fread(idatData.compressedData + idatData.compressedSize, 1, chunkLen, f);
-            idatData.compressedSize += chunkLen;
-            fseek(f, 4, SEEK_CUR);
-        }
-        else if (memcmp(chunkType, "IEND", 4) == 0)
-        {
-            break;
-        }
-        else
-        {
-            // if (('A' <= chunkType[0]) && (chunkType[0] <= 'Z'))
-            // {
-            //     char _[28] = "Unkown critical chunk: ";
-            //     return false;
-            // }
-            // else
-            // {
-            WRN("Ignoring unknown chunk of length: %i", chunkLen);
-            fseek(f, chunkLen + 4, SEEK_CUR);
-            // }
-        }
+        fseek(f, 4, SEEK_CUR); // crc
     }
 
     // --- image data
-    if (ihdrData.bitDepth != 8)
-    {
-        snprintf(err, 100, "Only bit-depth of 8 bits/sample is supported.");
-        return false;
-    }
-
     // decompression
-    mz_ulong actualDecompressedSize = idatData.decompressedSize;
+    DBG("Decompressing...");
+
+    di.decompressedData = (byte *) malloc(ihdr.height * (1 + ihdr.width * 8)); // TODO: where does '4' come from? i guess maximum possible color type (RGBA) + bit-depth (16) combination?
+    mz_ulong decompressedSize = ihdr.height * (1 + ihdr.width * 8);
 
     int status = mz_uncompress(
-        idatData.decompressedData,
-        &actualDecompressedSize,
-        idatData.compressedData,
-        idatData.compressedSize
+        di.decompressedData,
+        &decompressedSize,
+        di.compressedData,
+        di.compressedDataSize
     );
 
-    if (status != MZ_OK)
-    {
-        snprintf(err, 100, "IDAT decompression failed. (code: %i)", status);
+    free(di.compressedData);
+    di.compressedData = NULL;
+
+    if (status != MZ_OK) {
+        if (err) snprintf(err, 100, "IDAT decompression failed. (code: %i)", status);
+        free(di.decompressedData);
         return false;
     }
 
-    // common parameters
-    uint8_t samplesPerPixel = 0;
-    switch (ihdrData.colorType)
-    {
-    case 0:
-        samplesPerPixel = 1;
-        break;
-    case 2:
-        samplesPerPixel = 3;
-        break;
-    case 3:
-        samplesPerPixel = 1;
-        break;
-    case 4:
-        samplesPerPixel = 2;
-        break;
-    case 6:
-        samplesPerPixel = 4;
-        break;
-    }
-
-    uint8_t bytesPerPixel = samplesPerPixel * 1;
-    size_t bytesPerScanline = 1 + ihdrData.width * bytesPerPixel;
-    uint32_t nScanlines = ihdrData.height;
-
     // un-filtering
+    DBG("Un-filtering...");
+
+    di.filteredData = (byte *) malloc(ihdr.height * ihdr.width * 8);
+
+    uint8_t samplesPerPixel = 0;
+    switch (ihdr.colorType) {
+        case IMJ_PNG_CLRTYPE_GRAY:
+            samplesPerPixel = 1;
+            break;
+        case IMJ_PNG_CLRTYPE_RGB:
+            samplesPerPixel = 3;
+            break;
+        case IMJ_PNG_CLRTYPE_IDX:
+            samplesPerPixel = 1;
+            break;
+        case IMJ_PNG_CLRTYPE_GRAYALPHA:
+            samplesPerPixel = 2;
+            break;
+        case IMJ_PNG_CLRTYPE_RGBA:
+            samplesPerPixel = 4;
+            break;
+    }
+    uint8_t bytesPerPixel = (uint8_t)ceil((double)samplesPerPixel * ihdr.bitDepth / 8.);
+    size_t bytesPerScanline = 1 +  (size_t)ceil((double)ihdr.width * samplesPerPixel * ihdr.bitDepth / 8.);
+
     byte prevUnfilteredScanline[bytesPerScanline - 1];
     memset(prevUnfilteredScanline, 0, bytesPerScanline - 1);
-    byte unfilteredScaline[bytesPerScanline - 1];
+    byte unfilteredScanline[bytesPerScanline - 1];
 
-    byte scaline[bytesPerScanline];
+    byte scanline[bytesPerScanline];
 
-    for (uint32_t i = 0; i < nScanlines; i++)
-    {
-        memcpy(scaline, idatData.decompressedData + i * bytesPerScanline, bytesPerScanline);
+    for (uint32_t i = 0, nScanlines = ihdr.height; i < nScanlines; i++) {
+        memcpy(scanline, di.decompressedData + i * bytesPerScanline, bytesPerScanline);
 
-        uint8_t filterType = scaline[0];
-        switch (filterType)
-        {
-        case 0:
-            for (size_t j = 0; j < bytesPerScanline - 1; j++)
-            {
-                unfilteredScaline[j] = scaline[j + 1];
-            }
-            break;
-        case 1:
-            for (size_t j = 0; j < bytesPerScanline - 1; j++)
-            {
-                if (j < bytesPerPixel)
-                    unfilteredScaline[j] = scaline[j + 1] + 0;
-                else
-                    unfilteredScaline[j] = (uint8_t)(scaline[j + 1] + unfilteredScaline[j - bytesPerPixel]);
-            }
-            break;
-        case 2:
-            for (size_t j = 0; j < bytesPerScanline - 1; j++)
-            {
-                unfilteredScaline[j] = (uint8_t)(scaline[j + 1] + prevUnfilteredScanline[j]);
-            }
-            break;
-        case 3:
-            for (size_t j = 0; j < bytesPerScanline - 1; j++)
-            {
-                uint8_t x = 0;
-                uint8_t y = prevUnfilteredScanline[j];
-
-                if (j >= bytesPerPixel)
-                    x = unfilteredScaline[j - bytesPerPixel];
-
-                unfilteredScaline[j] = (uint8_t)(scaline[j + 1] + (uint8_t)((x + y) / 2));
-            }
-            break;
-        case 4:
-            for (size_t j = 0; j < bytesPerScanline - 1; j++)
-            {
-                uint8_t a = 0;
-                uint8_t b = prevUnfilteredScanline[j];
-                uint8_t c = 0;
-
-                if (j >= bytesPerPixel)
-                {
-                    a = unfilteredScaline[j - bytesPerPixel];
-                    c = prevUnfilteredScanline[j - bytesPerPixel];
+        switch (scanline[0]) {
+            case IMJ_PNG_FILTER_NONE: {
+                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
+                    unfilteredScanline[j] = scanline[j + 1];
                 }
+                break;
+            }
+            case IMJ_PNG_FILTER_SUB: {
+                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
+                    if (j < bytesPerPixel)
+                        unfilteredScanline[j] = scanline[j + 1] + 0;
+                    else
+                        unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + unfilteredScanline[j - bytesPerPixel]);
+                }
+                break;
+            }
+            case IMJ_PNG_FILTER_UP: {
+                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
+                    unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + prevUnfilteredScanline[j]);
+                }
+                break;
+            }
+            case IMJ_PNG_FILTER_AVG: {
+                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
+                    uint8_t x = 0;
+                    uint8_t y = prevUnfilteredScanline[j];
 
-                unfilteredScaline[j] = (uint8_t)(scaline[j + 1] + imj_PaethPredictor__(a, b, c));
+                    if (j >= bytesPerPixel)
+                        x = unfilteredScanline[j - bytesPerPixel];
+
+                    unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + (uint8_t) ((x + y) / 2));
+                }
+                break;
+            }
+            case IMJ_PNG_FILTER_PAETH: {
+                for (size_t j = 0; j < bytesPerScanline - 1; j++) {
+                    uint8_t a = 0;
+                    uint8_t b = prevUnfilteredScanline[j];
+                    uint8_t c = 0;
+
+                    if (j >= bytesPerPixel) {
+                        a = unfilteredScanline[j - bytesPerPixel];
+                        c = prevUnfilteredScanline[j - bytesPerPixel];
+                    }
+
+                    unfilteredScanline[j] = (uint8_t) (scanline[j + 1] + imj_png_paeth__(a, b, c));
+                }
+                break;
+            }
+            default: {
+                snprintf(err, 100, "Unknown filter type.");
+                free(di.compressedData);
+                free(di.filteredData);
+                return false;
+            }
+        }
+
+        memcpy(prevUnfilteredScanline, unfilteredScanline, bytesPerScanline - 1);
+        memcpy(di.filteredData + i * (bytesPerScanline - 1), unfilteredScanline, bytesPerScanline - 1);
+    }
+
+    free(di.decompressedData);
+    di.decompressedData = NULL;
+
+    // assembling image data
+    DBG("Assembling image data...");
+    data = (ImjPix *) malloc(ihdr.width * ihdr.height * sizeof(ImjPix));
+
+    ImjPngSamplerInfo si;
+    imj_png_sampler_init(&si, &ihdr, &di);
+
+    switch (ihdr.colorType) {
+        case IMJ_PNG_CLRTYPE_GRAY: {
+            for (uint32_t i = 0; i < ihdr.height; i++) {
+                si.buff = 0;
+                si.buffSize = 0;
+                for (uint32_t j = 0; j < ihdr.width; j++) {
+                    size_t k = (size_t) i * ihdr.width + j;
+                    uint8_t s = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+
+                    data[k].r = s;
+                    data[k].g = s;
+                    data[k].b = s;
+                    data[k].a = 255;
+                }
             }
             break;
-        default:
-            snprintf(err, 100, "Unknown filter type.");
-            return false;
         }
+        case IMJ_PNG_CLRTYPE_RGB: {
+            for (uint32_t i = 0; i < ihdr.height; i++) {
+                si.buff = 0;
+                si.buffSize = 0;
+                for (uint32_t j = 0; j < ihdr.width; j++) {
+                    size_t k = (size_t) i * ihdr.width + j;
 
-        memcpy(prevUnfilteredScanline, unfilteredScaline, bytesPerScanline - 1);
-        memcpy(idatData.filteredData + i * (bytesPerScanline - 1), unfilteredScaline, bytesPerScanline - 1);
-    }
-
-    // creating final image data
-    data = (ImjPix *)malloc(ihdrData.width * ihdrData.height * sizeof(ImjPix));
-
-    switch (ihdrData.colorType)
-    {
-    case 0:
-    {
-        for (uint32_t i = 0; i < ihdrData.height; i++)
-        {
-            for (uint32_t j = 0; j < ihdrData.width; j++)
-            {
-                size_t k = (size_t)i * ihdrData.width + j;
-
-                ImjPix pix;
-                pix.r = idatData.filteredData[k];
-                pix.g = pix.r;
-                pix.b = pix.r;
-                pix.a = 255;
-
-                data[k] = pix;
+                    data[k].r = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].g = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].b = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].a = 255;
+                }
             }
+            break;
         }
-        break;
-    }
-    case 2:
-    {
-        for (uint32_t i = 0; i < ihdrData.height; i++)
-        {
-            for (uint32_t j = 0; j < ihdrData.width; j++)
-            {
-                size_t k = (size_t)i * ihdrData.width + j;
-                size_t off = k * 3;
-
-                ImjPix pix;
-                pix.r = idatData.filteredData[off];
-                pix.g = idatData.filteredData[off + 1];
-                pix.b = idatData.filteredData[off + 2];
-                pix.a = 255;
-
-                data[k] = pix;
+        case IMJ_PNG_CLRTYPE_IDX: {
+            if (!palette) {
+                snprintf(err, 100, "Pallete chunk didn't appear for indexed PNG.");
+                return false;
             }
-        }
-        break;
-    }
-    case 3:
-    {
-        if (!pallete)
-        {
-            snprintf(err, 100, "Pallete chunk didn't appear for indexed PNG.");
-            return false;
-        }
-
-        for (uint32_t i = 0; i < ihdrData.height; i++)
-        {
-            for (uint32_t j = 0; j < ihdrData.width; j++)
-            {
-                size_t k = (size_t)i * ihdrData.width + j;
-                memcpy(data + k, pallete + idatData.filteredData[k], sizeof(ImjPix));
+            for (uint32_t i = 0; i < ihdr.height; i++) {
+                si.buff = 0;
+                si.buffSize = 0;
+                for (uint32_t j = 0; j < ihdr.width; j++) {
+                    size_t k = (size_t) i * ihdr.width + j;
+                    data[k] = palette[imj_png_sampler_nextSample(&si)];
+                }
             }
+            break;
         }
-        break;
-    }
-    case 4:
-    {
-        for (uint32_t i = 0; i < ihdrData.height; i++)
-        {
-            for (uint32_t j = 0; j < ihdrData.width; j++)
-            {
-                size_t k = (size_t)i * ihdrData.width + j;
-                size_t off = k * 2;
+        case IMJ_PNG_CLRTYPE_GRAYALPHA: {
+            for (uint32_t i = 0; i < ihdr.height; i++) {
+                si.buff = 0;
+                si.buffSize = 0;
+                for (uint32_t j = 0; j < ihdr.width; j++) {
+                    size_t k = (size_t) i * ihdr.width + j;
+                    uint8_t s = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
 
-                ImjPix pix;
-                pix.r = idatData.filteredData[off];
-                pix.g = pix.r;
-                pix.b = pix.r;
-                pix.a = idatData.filteredData[off + 1];
-
-                data[k] = pix;
+                    data[k].r = s;
+                    data[k].g = s;
+                    data[k].b = s;
+                    data[k].a = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                }
             }
+            break;
         }
-        break;
-    }
-    case 6:
-    {
-        for (uint32_t i = 0; i < ihdrData.height; i++)
-        {
-            for (uint32_t j = 0; j < ihdrData.width; j++)
-            {
-                size_t k = (size_t)i * ihdrData.width + j;
-                size_t off = k * 4;
+        case IMJ_PNG_CLRTYPE_RGBA: {
+            for (uint32_t i = 0; i < ihdr.height; i++) {
+                si.buff = 0;
+                si.buffSize = 0;
+                for (uint32_t j = 0; j < ihdr.width; j++) {
+                    size_t k = (size_t) i * ihdr.width + j;
 
-                ImjPix pix;
-                pix.r = idatData.filteredData[off];
-                pix.g = idatData.filteredData[off + 1];
-                pix.b = idatData.filteredData[off + 2];
-                pix.a = idatData.filteredData[off + 3];
-
-                data[k] = pix;
+                    data[k].r = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].g = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].b = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                    data[k].a = (imj_png_sampler_nextSample(&si) * 255u) / si.maxVal;
+                }
             }
+            break;
         }
-        break;
-    }
     }
 
     // ---
-    img->width = ihdrData.width;
-    img->height = ihdrData.height;
+    img->width = ihdr.width;
+    img->height = ihdr.height;
     img->data = data;
 
     // --- cleanup
-    if (pallete)
-        free(pallete);
-    if (idatData.compressedData)
-        free(idatData.compressedData);
-    if (idatData.decompressedData)
-        free(idatData.decompressedData);
-    if (idatData.filteredData)
-        free(idatData.filteredData);
+    if (palette) free(palette);
+    if (di.filteredData) free(di.filteredData);
 
     // ---
     return true;
 }
 
-bool imj_png_read_IHDR(FILE *f, imj_png_IHDR *ihdrData, char err[100])
-{
+bool imj_png_read_IHDR(FILE *f, ImjPngIhdr *ihdr, char err[100]) {
     // reading
-    fread(&ihdrData->width, 4, 1, f);
-    fread(&ihdrData->height, 4, 1, f);
-    fread(&ihdrData->bitDepth, 1, 1, f);
-    fread(&ihdrData->colorType, 1, 1, f);
-    fread(&ihdrData->compressionMethod, 1, 1, f);
-    fread(&ihdrData->filterMethod, 1, 1, f);
-    fread(&ihdrData->interlaceMethod, 1, 1, f);
+    fread(&ihdr->width, 4, 1, f);
+    fread(&ihdr->height, 4, 1, f);
+    fread(&ihdr->bitDepth, 1, 1, f);
+    fread(&ihdr->colorType, 1, 1, f);
+    fread(&ihdr->compressionMethod, 1, 1, f);
+    fread(&ihdr->filterMethod, 1, 1, f);
+    fread(&ihdr->interlaceMethod, 1, 1, f);
 
-    imj_swap_uint32(&ihdrData->width);
-    imj_swap_uint32(&ihdrData->height);
+    imj_swap_uint32(&ihdr->width);
+    imj_swap_uint32(&ihdr->height);
+
+    imj_png_dbg_IHDR(ihdr);
 
     // width, height check | TODO: check before swapping endian-ness
-    if (ihdrData->width == 0 || (ihdrData->width & 0x80000000) != 0)
-    {
+    if (ihdr->width == 0 || (ihdr->width & 0x80000000) != 0) {
         snprintf(err, 100, "Invalid width.");
         return false;
     }
-    if (ihdrData->height == 0 || (ihdrData->height & 0x80000000) != 0)
-    {
+    if (ihdr->height == 0 || (ihdr->height & 0x80000000) != 0) {
         snprintf(err, 100, "Invalid width.");
         return false;
     }
 
     // bit-depht check
-    if (!(ihdrData->bitDepth == 1 ||
-          ihdrData->bitDepth == 2 ||
-          ihdrData->bitDepth == 4 ||
-          ihdrData->bitDepth == 8 ||
-          ihdrData->bitDepth == 16))
-    {
+    if (!(ihdr->bitDepth == 1 || ihdr->bitDepth == 2 || ihdr->bitDepth == 4 || ihdr->bitDepth == 8 || ihdr->bitDepth ==
+          16)) {
         snprintf(err, 100, "Invalid bit-depth.");
         return false;
     }
 
     // color type check | TODO: use a 'switch'
-    switch (ihdrData->colorType)
-    {
-    case 0:
-        break;
-    case 2:
-        if (!(ihdrData->bitDepth == 8 || ihdrData->bitDepth == 16))
-        {
-            snprintf(err, 100, "Invalid bit-depth for RGB color type (2).");
+    switch (ihdr->colorType) {
+        case 0:
+            break;
+        case 2:
+            if (!(ihdr->bitDepth == 8 || ihdr->bitDepth == 16)) {
+                snprintf(err, 100, "Invalid bit-depth for RGB color type (2).");
+                return false;
+            }
+            break;
+        case 3:
+            if (!(ihdr->bitDepth == 1 || ihdr->bitDepth == 2 || ihdr->bitDepth == 4 || ihdr->bitDepth ==
+                  8)) {
+                snprintf(err, 100, "Invalid bit-depth for palette-index color type (3).");
+                return false;
+            }
+            break;
+        case 4:
+            if (!(ihdr->bitDepth == 8 || ihdr->bitDepth == 16)) {
+                snprintf(err, 100, "Invalid bit-depth for grayscale-alpha color type (4).");
+                return false;
+            }
+            break;
+        case 6:
+            if (!(ihdr->bitDepth == 8 || ihdr->bitDepth == 16)) {
+                snprintf(err, 100, "Invalid bit-depth for RGBA color type (6).");
+                return false;
+            }
+            break;
+        default:
+            snprintf(err, 100, "Invalid color type.");
             return false;
-        }
-        break;
-    case 3:
-        if (!(ihdrData->bitDepth == 1 || ihdrData->bitDepth == 2 || ihdrData->bitDepth == 4 || ihdrData->bitDepth == 8))
-        {
-            snprintf(err, 100, "Invalid bit-depth for pallete-index color type (3).");
-            return false;
-        }
-        break;
-    case 4:
-        if (!(ihdrData->bitDepth == 8 || ihdrData->bitDepth == 16))
-        {
-            snprintf(err, 100, "Invalid bit-depth for grayscale-alpha color type (4).");
-            return false;
-        }
-        break;
-    case 6:
-        if (!(ihdrData->bitDepth == 8 || ihdrData->bitDepth == 16))
-        {
-            snprintf(err, 100, "Invalid bit-depth for RGBA color type (6).");
-            return false;
-        }
-        break;
-    default:
-        snprintf(err, 100, "Invalid color type.");
-        return false;
     }
 
     // other checks
-    if (ihdrData->compressionMethod != 0)
-    {
+    if (ihdr->compressionMethod != 0) {
         snprintf(err, 100, "Invalid compression method.");
         return false;
     }
-    if (ihdrData->filterMethod != 0)
-    {
+    if (ihdr->filterMethod != 0) {
         snprintf(err, 100, "Invalid filther method.");
         return false;
     }
-    if (ihdrData->interlaceMethod != 0)
-    {
+    if (ihdr->interlaceMethod != 0) {
         snprintf(err, 100, "Only non-interlaced PNGs are supported (yet).");
         return false;
     }
@@ -441,24 +380,20 @@ bool imj_png_read_IHDR(FILE *f, imj_png_IHDR *ihdrData, char err[100])
     return true;
 }
 
-bool imj_png_read_PLTE(FILE *f, ImjClr **pallete, uint32_t len, char err[100])
-{
-    if (len % 3 != 0)
-    {
+bool imj_png_read_PLTE(FILE *f, ImjClr **palette, const uint32_t len, char err[100]) {
+    if (len % 3 != 0) {
         snprintf(err, 100, "PLTE chunk size must be a multiple of 3.");
         return false;
     }
-    if (*pallete)
-    {
+    if (*palette) {
         snprintf(err, 100, "There must only be 1 PLTE chunk.");
         return false;
     }
 
     // TODO: max entries < possible due to bit-depth
-    *pallete = malloc(len / 3 * sizeof(ImjClr));
+    *palette = malloc(len / 3 * sizeof(ImjClr));
 
-    for (size_t i = 0, n = len / 3; i < n; i++)
-    {
+    for (size_t i = 0, n = len / 3; i < n; i++) {
         ImjPix clr = {};
 
         fread(&clr.r, 1, 1, f);
@@ -466,8 +401,44 @@ bool imj_png_read_PLTE(FILE *f, ImjClr **pallete, uint32_t len, char err[100])
         fread(&clr.b, 1, 1, f);
         clr.a = 255;
 
-        memcpy(&(*pallete)[i], &clr, sizeof(ImjClr));
+        memcpy(&(*palette)[i], &clr, sizeof(ImjClr));
     }
 
     return true;
+}
+
+void imj_png_sampler_init(ImjPngSamplerInfo *si, ImjPngIhdr *ihdr, ImjPngDataInfo *di) {
+    si->bitDepth = ihdr->bitDepth;
+    si->mask = (1 << ihdr->bitDepth) - 1;
+    si->maxVal = si->mask; // coincidently, it's the same
+    si->filteredData = di->filteredData; // TODO: check for null
+    si->curPos = 0;
+    si->buff = 0;
+    si->buffSize = 0;
+}
+
+uint16_t imj_png_sampler_nextSample(ImjPngSamplerInfo *si) {
+    while (si->buffSize < si->bitDepth) {
+        si->buff <<= 8;
+        si->buff |= si->filteredData[si->curPos++];
+        si->buffSize += 8;
+    }
+
+    const uint16_t shift = si->buffSize - si->bitDepth;
+    const uint16_t ret = (si->buff >> shift) & si->mask;
+    si->buffSize -= si->bitDepth;
+    si->buff &= (1 << si->buffSize) - 1;
+
+    return ret;
+}
+
+void imj_png_dbg_IHDR(ImjPngIhdr *ihdr) {
+    DBG("IHDR:");
+    VER("Width: %i\n", ihdr->width);
+    VER("Height: %i\n", ihdr->height);
+    VER("Bit-depth: %i\n", ihdr->bitDepth);
+    VER("Color type: %i\n", ihdr->colorType);
+    VER("Compression method: %i\n", ihdr->compressionMethod);
+    VER("Filter method: %i\n", ihdr->filterMethod);
+    VER("Interlace method: %i\n", ihdr->interlaceMethod);
 }
