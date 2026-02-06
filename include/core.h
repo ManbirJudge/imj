@@ -1,10 +1,14 @@
 #ifndef CORE_H
 #define CORE_H
 
-#ifdef IMJ_EXPORTS
-#define IMJ __declspec(dllexport)
+#ifdef _WIN32
+    #ifdef IMJ_EXPORTS
+        #define IMJ __declspec(dllexport)
+    #else
+        #define IMJ __declspec(dllimport)
+    #endif
 #else
-#define IMJ __declspec(dllimport)
+    #define IMJ
 #endif
 
 #include <stdlib.h>
